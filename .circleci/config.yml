@@ -1,0 +1,171 @@
+version: 2.1
+
+# Generated for the immer monorepo (root library + website + perf-testing).
+# Package manager: Yarn Classic (v1) — all three yarn.lock files are "lockfile v1".
+# No orbs are used: everything here is plain checkout/cache/run, so there is
+# nothing to pin to a floating orb version.
+
+executors:
+  node:
+    docker:
+      # Node 24 matches the version this repo's CI history used (setup-node@v6, node-version: 24).
+      - image: cimg/node:24.0
+    resource_class: medium
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Root project: the `immer` library itself.
+  # Mirrors `yarn test` (= test:src && test:build && test:flow), using
+  # `yarn coverage` for the source run so we also get an lcov report.
+  # ---------------------------------------------------------------------------
+  immer:
+    executor: node
+    working_directory: ~/project
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+            - immer-yarn-v1-{{ checksum "yarn.lock" }}
+            - immer-yarn-v1-
+
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile
+
+      - save_cache:
+          key: immer-yarn-v1-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+            - node_modules
+
+      - run:
+          name: Unit tests + coverage (yarn coverage)
+          # `yarn coverage` == `vitest run --coverage`. The extra reporter flags are
+          # appended only so CircleCI can ingest JUnit results; they do not change
+          # which tests run.
+          command: yarn coverage --reporter=default --reporter=junit --outputFile.junit=./test-results/vitest/results.xml
+
+      - run:
+          name: Build + production-build tests (yarn test:build)
+          # `yarn test:build` == `yarn build && vitest run --config vitest.config.build.ts`
+          command: yarn test:build
+
+      - run:
+          name: Flow type tests (yarn test:flow)
+          command: yarn test:flow
+
+      - run:
+          name: Performance smoke tests (yarn test:perf)
+          command: yarn test:perf
+
+      # `when: always` so failing tests still publish their results/coverage.
+      - store_test_results:
+          when: always
+          path: test-results
+
+      - store_artifacts:
+          when: always
+          path: test-results
+          destination: test-results
+
+      - store_artifacts:
+          when: always
+          path: coverage
+          destination: coverage
+
+      - store_artifacts:
+          path: dist
+          destination: dist
+
+  # ---------------------------------------------------------------------------
+  # website/ — Docusaurus 2 documentation site.
+  # Job-level working_directory stays at the repo root so `checkout` behaves,
+  # and each step runs inside ~/project/website.
+  # ---------------------------------------------------------------------------
+  website:
+    executor: node
+    working_directory: ~/project
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+            - website-yarn-v1-{{ checksum "website/yarn.lock" }}
+            - website-yarn-v1-
+
+      - run:
+          name: Install dependencies
+          working_directory: ~/project/website
+          command: yarn install --frozen-lockfile
+
+      - save_cache:
+          key: website-yarn-v1-{{ checksum "website/yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+            - website/node_modules
+
+      - run:
+          name: Build docs site (yarn build)
+          working_directory: ~/project/website
+          command: yarn build
+
+      - store_artifacts:
+          path: website/build
+          destination: website
+
+  # ---------------------------------------------------------------------------
+  # perf-testing/ — benchmark harness. It bundles against the root `dist/`,
+  # so the root package is installed and built first (that is exactly what the
+  # project's own `build-with-latest` script does).
+  # ---------------------------------------------------------------------------
+  perf-testing:
+    executor: node
+    working_directory: ~/project
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+            - immer-yarn-v1-{{ checksum "yarn.lock" }}
+            - immer-yarn-v1-
+
+      - run:
+          name: Install root dependencies
+          command: yarn install --frozen-lockfile
+
+      - restore_cache:
+          keys:
+            - perf-yarn-v1-{{ checksum "perf-testing/yarn.lock" }}
+            - perf-yarn-v1-
+
+      - run:
+          name: Install perf-testing dependencies
+          working_directory: ~/project/perf-testing
+          command: yarn install --frozen-lockfile
+
+      - save_cache:
+          key: perf-yarn-v1-{{ checksum "perf-testing/yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+            - perf-testing/node_modules
+
+      - run:
+          name: Build immer + benchmark bundle (yarn build-with-latest)
+          # == `cd .. && yarn build` followed by `rolldown -c rolldown.config.js`.
+          # The actual benchmark run (`yarn benchmark`) is intentionally not part
+          # of CI; add it here if you want benchmark output on every build.
+          working_directory: ~/project/perf-testing
+          command: yarn build-with-latest
+
+      - store_artifacts:
+          path: perf-testing/dist
+          destination: perf-testing-dist
+
+workflows:
+  build-and-test:
+    jobs:
+      # All three run in parallel; none depend on the others.
+      - immer
+      - website
+      - perf-testing
