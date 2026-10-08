@@ -1,0 +1,32 @@
+version: 2.1
+
+jobs:
+  immer:
+    docker:
+      # No Node version is pinned in the repo; use the newest available release.
+      # The image includes Yarn Classic, matching yarn.lock.
+      - image: cimg/node:26.11
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - yarn-v1-node-26.11-{{ arch }}-{{ checksum "yarn.lock" }}
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile --non-interactive --cache-folder ~/.cache/yarn
+      - save_cache:
+          key: yarn-v1-node-26.11-{{ arch }}-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+      - run:
+          name: Build
+          command: yarn build
+      - run:
+          name: Test source, production build, and Flow types
+          command: yarn test
+      # No lint script is defined in package.json.
+
+workflows:
+  build-and-test:
+    jobs:
+      - immer
