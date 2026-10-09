@@ -1,0 +1,30 @@
+version: 2.1
+
+jobs:
+  immer:
+    docker:
+      - image: cimg/node:24.21
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - immer-yarn-{{ checksum "yarn.lock" }}
+            - immer-yarn-
+      - run:
+          name: Install dependencies
+          command: yarn install --frozen-lockfile
+      - save_cache:
+          key: immer-yarn-{{ checksum "yarn.lock" }}
+          paths:
+            - node_modules
+      - run:
+          name: Build
+          command: yarn build
+      - run:
+          name: Test
+          command: yarn test
+
+workflows:
+  ci:
+    jobs:
+      - immer
